@@ -76,9 +76,10 @@ def build_remote_url(platform, token, repo_url):
         return repo_url
     if repo_url.startswith("https://"):
         after_https = repo_url[len("https://"):]
-        if after_https.startswith(host):
+        if platform == "GitHub":
+            return f"https://{token}@{after_https}"
+        else:
             return f"https://oauth2:{token}@{after_https}"
-        return f"https://oauth2:{token}@{after_https}"
     return repo_url
 
 
@@ -104,7 +105,7 @@ def push_to_remote(repo_path, remote_url, branch, platform, token, callback):
 class MultiGitPublisher(Gtk.Window):
     def __init__(self):
         super().__init__(title="Multi-Git-Publisher")
-        self.set_default_size(720, 560)
+        self.set_default_size(720, 580)
         self.set_border_width(0)
 
         self.cfg = load_config()
@@ -117,7 +118,6 @@ class MultiGitPublisher(Gtk.Window):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(vbox)
 
-        # Header bar
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         header.props.title = t(self.strings, "app_title")
@@ -127,7 +127,6 @@ class MultiGitPublisher(Gtk.Window):
         self.btn_lang.connect("clicked", self._on_lang_switch)
         header.pack_end(self.btn_lang)
 
-        # Notebook
         self.notebook = Gtk.Notebook()
         self.notebook.set_border_width(0)
         vbox.pack_start(self.notebook, True, True, 0)
@@ -148,12 +147,57 @@ class MultiGitPublisher(Gtk.Window):
         self.entry_repo_path = Gtk.Entry()
         self.entry_repo_path.set_placeholder_text(t(self.strings, "repo_path_placeholder"))
         self.entry_repo_path.set_hexpand(True)
+        self.entry_repo_path.connect("changed", self._on_repo_path_changed)
         btn_browse = Gtk.Button(label=t(self.strings, "browse"))
         btn_browse.connect("clicked", self._on_browse)
         row_path.pack_start(lbl_path, False, False, 0)
         row_path.pack_start(self.entry_repo_path, True, True, 0)
         row_path.pack_start(btn_browse, False, False, 0)
         box.pack_start(row_path, False, False, 0)
+
+        # Init banner (initially hidden)
+        self.init_banner = Gtk.Box(spacing=8)
+
+        lbl_init = Gtk.Label(label=t(self.strings, "init_hint"))
+        lbl_init.set_xalign(0)
+        lbl_init.set_hexpand(True)
+        lbl_init.set_line_wrap(True)
+
+        self.entry_commit_msg = Gtk.Entry()
+        self.entry_commit_msg.set_text("Initial commit")
+        self.entry_commit_msg.set_width_chars(24)
+        self.entry_commit_msg.set_placeholder_text(t(self.strings, "commit_msg_placeholder"))
+
+        btn_init = Gtk.Button(label=t(self.strings, "btn_init"))
+        btn_init.get_style_context().add_class("suggested-action")
+        btn_init.connect("clicked", self._on_git_init)
+
+        self.init_banner.pack_start(lbl_init, True, True, 0)
+        self.init_banner.pack_start(self.entry_commit_msg, False, False, 0)
+        self.init_banner.pack_start(btn_init, False, False, 0)
+        box.pack_start(self.init_banner, False, False, 0)
+        self.init_banner.set_visible(False)
+
+        # Commit banner (visible when valid repo is selected)
+        self.commit_banner = Gtk.Box(spacing=8)
+
+        lbl_commit = Gtk.Label(label=t(self.strings, "commit_hint"))
+        lbl_commit.set_xalign(0)
+        lbl_commit.set_hexpand(True)
+        lbl_commit.set_line_wrap(True)
+
+        self.entry_new_commit_msg = Gtk.Entry()
+        self.entry_new_commit_msg.set_width_chars(24)
+        self.entry_new_commit_msg.set_placeholder_text(t(self.strings, "commit_msg_placeholder"))
+
+        btn_commit = Gtk.Button(label=t(self.strings, "btn_commit"))
+        btn_commit.connect("clicked", self._on_git_commit)
+
+        self.commit_banner.pack_start(lbl_commit, True, True, 0)
+        self.commit_banner.pack_start(self.entry_new_commit_msg, False, False, 0)
+        self.commit_banner.pack_start(btn_commit, False, False, 0)
+        box.pack_start(self.commit_banner, False, False, 0)
+        self.commit_banner.set_visible(False)
 
         # Branch
         row_branch = Gtk.Box(spacing=8)
@@ -229,11 +273,58 @@ class MultiGitPublisher(Gtk.Window):
     def _clear_log(self):
         self.log_buffer.set_text("")
 
+    def _on_repo_path_changed(self, entry):
+        path = entry.get_text().strip()
+        if path and os.path.isdir(path) and not is_git_repo(path):
+            self.init_banner.set_visible(True)
+            self.commit_banner.set_visible(False)
+        elif path and is_git_repo(path):
+            self.init_banner.set_visible(False)
+            self.commit_banner.set_visible(True)
+        else:
+            self.init_banner.set_visible(False)
+            self.commit_banner.set_visible(False)
+
+    def _on_git_init(self, _):
+        repo_path = self.entry_repo_path.get_text().strip()
+        msg = self.entry_commit_msg.get_text().strip() or "Initial commit"
+        try:
+            subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+            subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", msg], cwd=repo_path, check=True, capture_output=True)
+            self.init_banner.set_visible(False)
+            self._clear_log()
+            self._append_log(t(self.strings, "init_ok"), "ok")
+        except subprocess.CalledProcessError as e:
+            self._clear_log()
+            self._append_log(t(self.strings, "init_fail", error=e.stderr.decode() if e.stderr else str(e)), "fail")
+
+    def _on_git_commit(self, _):
+        repo_path = self.entry_repo_path.get_text().strip()
+        msg = self.entry_new_commit_msg.get_text().strip()
+        if not msg:
+            self._clear_log()
+            self._append_log(t(self.strings, "commit_msg_empty"), "fail")
+            return
+        try:
+            subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+            result = subprocess.run(["git", "commit", "-m", msg], cwd=repo_path, capture_output=True)
+            if result.returncode == 0:
+                self.entry_new_commit_msg.set_text("")
+                self._clear_log()
+                self._append_log(t(self.strings, "commit_ok"), "ok")
+            else:
+                output = result.stderr.decode() if result.stderr else result.stdout.decode()
+                self._clear_log()
+                self._append_log(t(self.strings, "commit_fail", error=output), "fail")
+        except subprocess.CalledProcessError as e:
+            self._clear_log()
+            self._append_log(t(self.strings, "commit_fail", error=e.stderr.decode() if e.stderr else str(e)), "fail")
+
     def _build_repos_tab(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_border_width(16)
 
-        # Toolbar
         toolbar = Gtk.Box(spacing=8)
         btn_add = Gtk.Button(label=t(self.strings, "repo_add"))
         btn_add.connect("clicked", self._on_repo_add)
@@ -243,7 +334,6 @@ class MultiGitPublisher(Gtk.Window):
         toolbar.pack_start(btn_remove, False, False, 0)
         box.pack_start(toolbar, False, False, 0)
 
-        # Repo list: name, platform, url
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
         self.repo_store = Gtk.ListStore(str, str, str)
@@ -263,7 +353,6 @@ class MultiGitPublisher(Gtk.Window):
         scroll.add(self.repo_view)
         box.pack_start(scroll, True, True, 0)
 
-        # Platform dropdown for new entries
         row_new = Gtk.Box(spacing=8)
         self.entry_new_name = Gtk.Entry()
         self.entry_new_name.set_placeholder_text(t(self.strings, "repo_name"))
@@ -335,6 +424,7 @@ class MultiGitPublisher(Gtk.Window):
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
         if dialog.run() == Gtk.ResponseType.OK:
             self.entry_repo_path.set_text(dialog.get_filename())
+            self._on_repo_path_changed(self.entry_repo_path)
         dialog.destroy()
 
     def _on_push(self, _):
@@ -357,7 +447,6 @@ class MultiGitPublisher(Gtk.Window):
             self._append_log(t(self.strings, "status_no_targets"), "fail")
             return
 
-        # Match repos to selected platforms
         repos = self.cfg.get("repos", [])
         tasks = []
         for p in selected_platforms:

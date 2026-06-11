@@ -32,5 +32,15 @@
   "lang_switch": "English",
   "error_token_missing": "Kein Token für {platform} konfiguriert.",
   "error_remote_exists": "Remote '{name}' existiert bereits.",
-  "settings_saved": "Einstellungen gespeichert."
+  "settings_saved": "Einstellungen gespeichert.",
+  "init_hint": "Kein Git-Repository gefunden. Initialisierung erforderlich:",
+  "commit_msg_placeholder": "Commit-Nachricht",
+  "btn_init": "Initialisieren & committen",
+  "init_ok": "Repository initialisiert und committet.",
+  "init_fail": "Initialisierung fehlgeschlagen: {error}",
+  "commit_hint": "Änderungen committen:",
+  "btn_commit": "Committen",
+  "commit_ok": "Commit erfolgreich.",
+  "commit_fail": "Commit fehlgeschlagen: {error}",
+  "commit_msg_empty": "Bitte eine Commit-Nachricht eingeben."
 }
