@@ -44,5 +44,6 @@
   "btn_commit": "Committen",
   "commit_ok": "Commit erfolgreich.",
   "commit_fail": "Commit fehlgeschlagen: {error}",
-  "commit_msg_empty": "Bitte eine Commit-Nachricht eingeben."
+  "commit_msg_empty": "Bitte eine Commit-Nachricht eingeben.",
+  "restart_hint": "Bitte neu starten."
 }
