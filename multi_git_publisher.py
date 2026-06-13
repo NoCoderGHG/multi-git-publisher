@@ -129,6 +129,44 @@ def push_to_remote(repo_path, remote_url, branch, platform, token, callback):
         GLib.idle_add(callback, platform, False, str(e))
 
 
+def make_menu_button(items, on_select, min_width=150):
+    """items: list of str. on_select(text) called on selection. Returns (button, update_fn)."""
+    btn = Gtk.MenuButton()
+    btn.set_size_request(min_width, -1)
+    lbl = Gtk.Label(label=items[0] if items else "")
+    btn.add(lbl)
+    menu = Gtk.Menu()
+
+    def build_menu(items, current=None):
+        for child in menu.get_children():
+            menu.remove(child)
+        group = []
+        for text in items:
+            item = Gtk.RadioMenuItem.new_with_label(group, text)
+            group = item.get_group()
+            if text == current:
+                item.set_active(True)
+
+            def _on_activate(i, t=text):
+                if i.get_active():
+                    lbl.set_text(t)
+                    on_select(t)
+            item.connect("activate", _on_activate)
+            menu.append(item)
+        menu.show_all()
+        if items:
+            active = current if current in items else items[0]
+            lbl.set_text(active)
+
+    build_menu(items, items[0] if items else None)
+    btn.set_popup(menu)
+
+    def update(new_items, current=None):
+        build_menu(new_items, current)
+
+    return btn, lbl, update
+
+
 class MultiGitPublisher(Gtk.Window):
     def __init__(self):
         super().__init__(title="Multi-Git-Publisher")
@@ -150,12 +188,26 @@ class MultiGitPublisher(Gtk.Window):
         header.props.title = t(self.strings, "app_title")
         self.set_titlebar(header)
 
-        self.lang_combo = Gtk.ComboBoxText()
-        for code, key in [("de", "lang_de"), ("en", "lang_en"), ("system", "lang_system")]:
-            self.lang_combo.append(code, t(self.strings, key))
-        self.lang_combo.set_active_id(self.cfg.get("lang", "system"))
-        self.lang_combo.connect("changed", self._on_lang_changed)
-        header.pack_end(self.lang_combo)
+        self._lang_options = [("de", "lang_de"), ("en", "lang_en"), ("system", "lang_system")]
+        self.lang_menu_btn = Gtk.MenuButton()
+        self.lang_menu_btn.set_size_request(130, -1)
+        self._lang_label = Gtk.Label()
+        self.lang_menu_btn.add(self._lang_label)
+        lang_menu = Gtk.Menu()
+        group = []
+        current_lang = self.cfg.get("lang", "system")
+        for code, key in self._lang_options:
+            item = Gtk.RadioMenuItem.new_with_label(group, t(self.strings, key))
+            group = item.get_group()
+            if code == current_lang:
+                item.set_active(True)
+            item.connect("activate", self._on_lang_menu_item, code)
+            lang_menu.append(item)
+            if code == current_lang:
+                self._lang_label.set_text(t(self.strings, key))
+        lang_menu.show_all()
+        self.lang_menu_btn.set_popup(lang_menu)
+        header.pack_end(self.lang_menu_btn)
 
         self.notebook = Gtk.Notebook()
         self.notebook.set_border_width(0)
@@ -168,6 +220,18 @@ class MultiGitPublisher(Gtk.Window):
     def _build_publish_tab(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_border_width(16)
+
+        # Project selector
+        row_project = Gtk.Box(spacing=8)
+        lbl_project = Gtk.Label(label=t(self.strings, "project") + ":")
+        lbl_project.set_xalign(0)
+        lbl_project.set_size_request(160, -1)
+        self.project_menu_btn, self._project_label, self._project_update = make_menu_button(
+            [], lambda name: self._on_project_selected(name), min_width=180
+        )
+        row_project.pack_start(lbl_project, False, False, 0)
+        row_project.pack_start(self.project_menu_btn, True, True, 0)
+        box.pack_start(row_project, False, False, 0)
 
         # Repo path
         row_path = Gtk.Box(spacing=8)
@@ -366,12 +430,13 @@ class MultiGitPublisher(Gtk.Window):
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
-        self.repo_store = Gtk.ListStore(str, str, str)
+        self.repo_store = Gtk.ListStore(str, str, str, str)  # name, platform, url, local_path
         self.repo_view = Gtk.TreeView(model=self.repo_store)
         for i, col_title in enumerate([
             t(self.strings, "repo_name"),
             t(self.strings, "repo_platform"),
             t(self.strings, "repo_url"),
+            t(self.strings, "repo_local_path"),
         ]):
             renderer = Gtk.CellRendererText()
             renderer.set_property("editable", True)
@@ -386,18 +451,25 @@ class MultiGitPublisher(Gtk.Window):
         row_new = Gtk.Box(spacing=8)
         self.entry_new_name = Gtk.Entry()
         self.entry_new_name.set_placeholder_text(t(self.strings, "repo_name"))
-        self.combo_new_platform = Gtk.ComboBoxText()
-        for p in PLATFORMS:
-            self.combo_new_platform.append_text(p)
-        self.combo_new_platform.set_active(0)
+        self._platform_current = PLATFORMS[0]
+        self.platform_menu_btn, self._platform_label, _ = make_menu_button(
+            PLATFORMS, lambda p: setattr(self, "_platform_current", p), min_width=120
+        )
         self.entry_new_url = Gtk.Entry()
         self.entry_new_url.set_placeholder_text("https://github.com/user/repo.git")
         self.entry_new_url.set_hexpand(True)
+        self.entry_new_local = Gtk.Entry()
+        self.entry_new_local.set_placeholder_text(t(self.strings, "repo_local_path"))
+        self.entry_new_local.set_width_chars(20)
+        btn_browse_new = Gtk.Button(label="…")
+        btn_browse_new.connect("clicked", self._on_browse_new_local)
         btn_add2 = Gtk.Button(label="+")
         btn_add2.connect("clicked", self._on_repo_add_row)
         row_new.pack_start(self.entry_new_name, False, False, 0)
-        row_new.pack_start(self.combo_new_platform, False, False, 0)
+        row_new.pack_start(self.platform_menu_btn, False, False, 0)
         row_new.pack_start(self.entry_new_url, True, True, 0)
+        row_new.pack_start(self.entry_new_local, False, False, 0)
+        row_new.pack_start(btn_browse_new, False, False, 0)
         row_new.pack_start(btn_add2, False, False, 0)
         box.pack_start(row_new, False, False, 0)
 
@@ -443,7 +515,17 @@ class MultiGitPublisher(Gtk.Window):
     def _refresh_repo_list(self):
         self.repo_store.clear()
         for r in self.cfg.get("repos", []):
-            self.repo_store.append([r.get("name", ""), r.get("platform", ""), r.get("url", "")])
+            self.repo_store.append([r.get("name", ""), r.get("platform", ""), r.get("url", ""), r.get("local_path", "")])
+        self._refresh_project_combo()
+
+    def _refresh_project_combo(self):
+        seen = []
+        for r in self.cfg.get("repos", []):
+            name = r.get("name", "")
+            if name and name not in seen:
+                seen.append(name)
+        current = self._project_label.get_text() if seen else ""
+        self._project_update(seen, current if current in seen else (seen[0] if seen else None))
 
     def _on_browse(self, _):
         dialog = Gtk.FileChooserDialog(
@@ -478,10 +560,11 @@ class MultiGitPublisher(Gtk.Window):
             return
 
         repos = self.cfg.get("repos", [])
+        selected_project = self._project_label.get_text()
         tasks = []
         for p in selected_platforms:
             token = self.cfg["tokens"].get(p, "")
-            platform_repos = [r for r in repos if r.get("platform") == p]
+            platform_repos = [r for r in repos if r.get("platform") == p and (not selected_project or r.get("name") == selected_project)]
             if not platform_repos:
                 self._append_log(f"[{p}] Kein Repository konfiguriert.", "muted")
                 continue
@@ -540,27 +623,51 @@ class MultiGitPublisher(Gtk.Window):
             self._refresh_repo_list()
         dialog.destroy()
 
+    def _on_browse_new_local(self, _):
+        dialog = Gtk.FileChooserDialog(
+            title=t(self.strings, "repo_path"),
+            parent=self,
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+        )
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+        if dialog.run() == Gtk.ResponseType.OK:
+            self.entry_new_local.set_text(dialog.get_filename())
+        dialog.destroy()
+
+    def _on_project_selected(self, name):
+        if not name:
+            return
+        repos = self.cfg.get("repos", [])
+        local_path = next((r.get("local_path", "") for r in repos if r.get("name") == name), "")
+        if local_path:
+            self.entry_repo_path.set_text(local_path)
+            self._on_repo_path_changed(self.entry_repo_path)
+
     def _on_repo_add_row(self, _):
         name = self.entry_new_name.get_text().strip()
-        platform = self.combo_new_platform.get_active_text()
+        platform = self._platform_current
         url = self.entry_new_url.get_text().strip()
+        local_path = self.entry_new_local.get_text().strip()
         if not url:
             return
         if not name:
             name = platform
-        self.cfg.setdefault("repos", []).append({"name": name, "platform": platform, "url": url})
+        self.cfg.setdefault("repos", []).append({"name": name, "platform": platform, "url": url, "local_path": local_path})
         save_config(self.cfg)
         self._refresh_repo_list()
         self.entry_new_name.set_text("")
         self.entry_new_url.set_text("")
+        self.entry_new_local.set_text("")
 
     def _on_repo_cell_edited(self, renderer, path, new_text, col):
         it = self.repo_store.get_iter_from_string(path)
         self.repo_store.set_value(it, col, new_text)
         idx = int(path)
-        keys = ["name", "platform", "url"]
+        keys = ["name", "platform", "url", "local_path"]
         self.cfg["repos"][idx][keys[col]] = new_text
         save_config(self.cfg)
+        if col == 0:  # name changed → refresh project combo
+            self._refresh_project_combo()
 
     def _on_tokens_save(self, _):
         for p, entry in self.token_entries.items():
@@ -576,20 +683,26 @@ class MultiGitPublisher(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
-    def _on_lang_changed(self, combo):
-        new_lang = combo.get_active_id()
-        if new_lang and new_lang != self.cfg.get("lang"):
-            self.cfg["lang"] = new_lang
-            save_config(self.cfg)
-            new_strings = load_i18n(resolve_lang(new_lang))
-            dialog = Gtk.MessageDialog(
-                transient_for=self, flags=0,
-                message_type=Gtk.MessageType.INFO,
-                buttons=Gtk.ButtonsType.OK,
-                text=t(new_strings, "restart_hint"),
-            )
-            dialog.run()
-            dialog.destroy()
+    def _on_lang_menu_item(self, item, code):
+        if not item.get_active():
+            return
+        if code == self.cfg.get("lang"):
+            return
+        self.cfg["lang"] = code
+        save_config(self.cfg)
+        for c, key in self._lang_options:
+            if c == code:
+                self._lang_label.set_text(t(self.strings, key))
+                break
+        new_strings = load_i18n(resolve_lang(code))
+        dialog = Gtk.MessageDialog(
+            transient_for=self, flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=t(new_strings, "restart_hint"),
+        )
+        dialog.run()
+        dialog.destroy()
 
 
 def main():
