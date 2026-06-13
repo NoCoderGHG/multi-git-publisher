@@ -8,6 +8,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib, Pango
 
 import json
+import locale
 import os
 import subprocess
 import threading
@@ -25,7 +26,7 @@ PLATFORM_HOSTS = {
 }
 
 DEFAULT_CONFIG = {
-    "lang": "de",
+    "lang": "system",
     "tokens": {"GitHub": "", "GitLab": "", "Codeberg": ""},
     "repos": [],
 }
@@ -51,12 +52,38 @@ def save_config(cfg):
         json.dump(cfg, f, indent=2)
 
 
+def detect_system_lang():
+    try:
+        loc = locale.getlocale()[0] or ""
+    except Exception:
+        loc = ""
+    if not loc:
+        loc = os.environ.get("LANG", "")
+    return "de" if loc.lower().startswith("de") else "en"
+
+
+def resolve_lang(setting):
+    if setting == "system":
+        return detect_system_lang()
+    return setting
+
+
 def load_i18n(lang):
+    en = {}
+    en_path = I18N_DIR / "en.json"
+    if en_path.exists():
+        with open(en_path) as f:
+            en = json.load(f)
+    if lang == "en":
+        return en
     path = I18N_DIR / f"{lang}.json"
     if not path.exists():
-        path = I18N_DIR / "de.json"
+        return en
     with open(path) as f:
-        return json.load(f)
+        strings = json.load(f)
+    for k, v in en.items():
+        strings.setdefault(k, v)
+    return strings
 
 
 def t(strings, key, **kwargs):
@@ -109,7 +136,7 @@ class MultiGitPublisher(Gtk.Window):
         self.set_border_width(0)
 
         self.cfg = load_config()
-        self.strings = load_i18n(self.cfg.get("lang", "de"))
+        self.strings = load_i18n(resolve_lang(self.cfg.get("lang", "system")))
 
         self._build_ui()
         self._refresh_repo_list()
@@ -123,9 +150,12 @@ class MultiGitPublisher(Gtk.Window):
         header.props.title = t(self.strings, "app_title")
         self.set_titlebar(header)
 
-        self.btn_lang = Gtk.Button(label=t(self.strings, "lang_switch"))
-        self.btn_lang.connect("clicked", self._on_lang_switch)
-        header.pack_end(self.btn_lang)
+        self.lang_combo = Gtk.ComboBoxText()
+        for code, key in [("de", "lang_de"), ("en", "lang_en"), ("system", "lang_system")]:
+            self.lang_combo.append(code, t(self.strings, key))
+        self.lang_combo.set_active_id(self.cfg.get("lang", "system"))
+        self.lang_combo.connect("changed", self._on_lang_changed)
+        header.pack_end(self.lang_combo)
 
         self.notebook = Gtk.Notebook()
         self.notebook.set_border_width(0)
@@ -546,20 +576,20 @@ class MultiGitPublisher(Gtk.Window):
         dialog.run()
         dialog.destroy()
 
-    def _on_lang_switch(self, _):
-        current = self.cfg.get("lang", "de")
-        new_lang = "en" if current == "de" else "de"
-        self.cfg["lang"] = new_lang
-        save_config(self.cfg)
-        dialog = Gtk.MessageDialog(
-            parent=self,
-            flags=0,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text="Bitte neu starten / Please restart." if new_lang == "de" else "Please restart / Bitte neu starten.",
-        )
-        dialog.run()
-        dialog.destroy()
+    def _on_lang_changed(self, combo):
+        new_lang = combo.get_active_id()
+        if new_lang and new_lang != self.cfg.get("lang"):
+            self.cfg["lang"] = new_lang
+            save_config(self.cfg)
+            new_strings = load_i18n(resolve_lang(new_lang))
+            dialog = Gtk.MessageDialog(
+                transient_for=self, flags=0,
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text=t(new_strings, "restart_hint"),
+            )
+            dialog.run()
+            dialog.destroy()
 
 
 def main():
