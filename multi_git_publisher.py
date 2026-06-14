@@ -449,12 +449,17 @@ class MultiGitPublisher(Gtk.Window):
         btn_add = Gtk.Button(label=t(s, "repo_add"))
         btn_add.connect("clicked", self._on_repo_add_row)
 
+        btn_add_all = Gtk.Button(label=t(s, "repo_add_all"))
+        btn_add_all.get_style_context().add_class("suggested-action")
+        btn_add_all.connect("clicked", self._on_repo_add_all)
+
         row_new.pack_start(self.entry_new_name, False, False, 0)
         row_new.pack_start(self.platform_menu_btn, False, False, 0)
         row_new.pack_start(self.entry_new_url, True, True, 0)
         row_new.pack_start(self.entry_new_local, False, False, 0)
         row_new.pack_start(btn_browse_new, False, False, 0)
         row_new.pack_start(btn_add, False, False, 0)
+        row_new.pack_start(btn_add_all, False, False, 0)
         box.pack_start(row_new, False, False, 0)
 
         label = Gtk.Label(label=t(s, "tab_repos"))
@@ -720,6 +725,48 @@ class MultiGitPublisher(Gtk.Window):
         if dialog.run() == Gtk.ResponseType.OK:
             self.entry_new_local.set_text(dialog.get_filename())
         dialog.destroy()
+
+    def _on_repo_add_all(self, _):
+        name       = self.entry_new_name.get_text().strip()
+        local_path = self.entry_new_local.get_text().strip()
+        if not name: return
+
+        usernames = self.cfg.get("usernames", {})
+        existing  = {(r.get("name"), r.get("platform")) for r in self.cfg.get("repos", [])}
+        added = 0
+        skipped_no_user = []
+
+        for platform in PLATFORMS:
+            if (name, platform) in existing:
+                continue
+            username = usernames.get(platform, "")
+            if not username:
+                skipped_no_user.append(platform)
+                continue
+            url = auto_url(platform, username, name)
+            self.cfg.setdefault("repos", []).append({
+                "name": name, "platform": platform,
+                "url": url, "local_path": local_path,
+            })
+            added += 1
+
+        if added:
+            save_config(self.cfg)
+            self._refresh_repo_list()
+            self.entry_new_name.set_text("")
+            self.entry_new_local.set_text("")
+            self.entry_new_url.set_text("")
+
+        if skipped_no_user:
+            dialog = Gtk.MessageDialog(
+                parent=self, flags=0,
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text=t(self.strings, "info_missing_usernames",
+                       platforms=", ".join(skipped_no_user)),
+            )
+            dialog.run()
+            dialog.destroy()
 
     def _on_repo_add_row(self, _):
         name       = self.entry_new_name.get_text().strip()
