@@ -14,6 +14,8 @@ import subprocess
 import threading
 from pathlib import Path
 
+COMMIT_SUBJECT_LIMIT = 72
+
 CONFIG_DIR  = Path.home() / ".config" / "multi-git-publisher"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 I18N_DIR    = Path(__file__).parent / "i18n"
@@ -311,36 +313,41 @@ class MultiGitPublisher(Gtk.Window):
         box.pack_start(row_path, False, False, 0)
 
         # Init banner
-        self.init_banner = Gtk.Box(spacing=8)
+        self.init_banner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         lbl_init = Gtk.Label(label=t(self.strings, "init_hint"))
         lbl_init.set_xalign(0); lbl_init.set_hexpand(True); lbl_init.set_line_wrap(True)
-        self.entry_commit_msg = Gtk.Entry()
-        self.entry_commit_msg.set_text("Initial commit")
-        self.entry_commit_msg.set_width_chars(24)
-        self.entry_commit_msg.set_placeholder_text(t(self.strings, "commit_msg_placeholder"))
+        self.init_banner.pack_start(lbl_init, False, False, 0)
+
+        init_fields, self.entry_commit_msg, self.buf_commit_body = \
+            self._make_commit_fields(default_subject="Initial commit")
+        self.init_banner.pack_start(init_fields, False, False, 0)
+
         btn_init = Gtk.Button(label=t(self.strings, "btn_init"))
         btn_init.get_style_context().add_class("suggested-action")
         btn_init.connect("clicked", self._on_git_init)
-        self.init_banner.pack_start(lbl_init, True, True, 0)
-        self.init_banner.pack_start(self.entry_commit_msg, False, False, 0)
-        self.init_banner.pack_start(btn_init, False, False, 0)
+        init_btn_row = Gtk.Box()
+        init_btn_row.pack_end(btn_init, False, False, 0)
+        self.init_banner.pack_start(init_btn_row, False, False, 0)
         box.pack_start(self.init_banner, False, False, 0)
-        self.init_banner.set_visible(False)
+        self._hide_banner(self.init_banner)
 
         # Commit banner
-        self.commit_banner = Gtk.Box(spacing=8)
+        self.commit_banner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         lbl_commit = Gtk.Label(label=t(self.strings, "commit_hint"))
         lbl_commit.set_xalign(0); lbl_commit.set_hexpand(True); lbl_commit.set_line_wrap(True)
-        self.entry_new_commit_msg = Gtk.Entry()
-        self.entry_new_commit_msg.set_width_chars(24)
-        self.entry_new_commit_msg.set_placeholder_text(t(self.strings, "commit_msg_placeholder"))
+        self.commit_banner.pack_start(lbl_commit, False, False, 0)
+
+        commit_fields, self.entry_new_commit_msg, self.buf_new_commit_body = \
+            self._make_commit_fields()
+        self.commit_banner.pack_start(commit_fields, False, False, 0)
+
         btn_commit = Gtk.Button(label=t(self.strings, "btn_commit"))
         btn_commit.connect("clicked", self._on_git_commit)
-        self.commit_banner.pack_start(lbl_commit, True, True, 0)
-        self.commit_banner.pack_start(self.entry_new_commit_msg, False, False, 0)
-        self.commit_banner.pack_start(btn_commit, False, False, 0)
+        commit_btn_row = Gtk.Box()
+        commit_btn_row.pack_end(btn_commit, False, False, 0)
+        self.commit_banner.pack_start(commit_btn_row, False, False, 0)
         box.pack_start(self.commit_banner, False, False, 0)
-        self.commit_banner.set_visible(False)
+        self._hide_banner(self.commit_banner)
 
         # Branch
         row_branch = Gtk.Box(spacing=8)
@@ -392,6 +399,71 @@ class MultiGitPublisher(Gtk.Window):
 
         label = Gtk.Label(label=t(self.strings, "tab_publish"))
         self.notebook.append_page(box, label)
+
+    def _hide_banner(self, banner):
+        """Kinder einzeln anzeigen, damit ein spaeteres set_visible(True)
+        greift, und das Banner selbst von show_all() ausnehmen."""
+        for child in banner.get_children():
+            child.show_all()
+        banner.set_no_show_all(True)
+        banner.set_visible(False)
+
+    def _make_commit_fields(self, default_subject=""):
+        """Betreffzeile (einzeilig) + optionaler Body (mehrzeilig).
+        Rueckgabe: (box, subject_entry, body_buffer)."""
+        s = self.strings
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+
+        row_subject = Gtk.Box(spacing=8)
+        lbl_subject = Gtk.Label(label=t(s, "commit_subject") + ":")
+        lbl_subject.set_xalign(0); lbl_subject.set_size_request(160, -1)
+        entry = Gtk.Entry()
+        entry.set_hexpand(True)
+        entry.set_text(default_subject)
+        entry.set_placeholder_text(t(s, "commit_subject_placeholder"))
+        counter = Gtk.Label()
+        counter.set_width_chars(7)
+        entry.connect("changed", self._on_subject_changed, counter)
+        row_subject.pack_start(lbl_subject, False, False, 0)
+        row_subject.pack_start(entry, True, True, 0)
+        row_subject.pack_start(counter, False, False, 0)
+        box.pack_start(row_subject, False, False, 0)
+
+        row_body = Gtk.Box(spacing=8)
+        lbl_body = Gtk.Label(label=t(s, "commit_body") + ":")
+        lbl_body.set_xalign(0); lbl_body.set_yalign(0); lbl_body.set_size_request(160, -1)
+        body_scroll = Gtk.ScrolledWindow()
+        body_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        body_scroll.set_min_content_height(90)
+        body_scroll.set_hexpand(True)
+        body_scroll.set_shadow_type(Gtk.ShadowType.IN)
+        body_view = Gtk.TextView()
+        body_view.set_monospace(True)
+        body_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        body_view.set_left_margin(4); body_view.set_right_margin(4)
+        body_view.set_tooltip_text(t(s, "commit_body_tooltip"))
+        body_scroll.add(body_view)
+        row_body.pack_start(lbl_body, False, False, 0)
+        row_body.pack_start(body_scroll, True, True, 0)
+        box.pack_start(row_body, False, False, 0)
+
+        self._on_subject_changed(entry, counter)
+        return box, entry, body_view.get_buffer()
+
+    def _on_subject_changed(self, entry, counter):
+        n = len(entry.get_text())
+        color = "#E24B4A" if n > COMMIT_SUBJECT_LIMIT else "#888780"
+        counter.set_markup(f'<span foreground="{color}">{n}/{COMMIT_SUBJECT_LIMIT}</span>')
+
+    @staticmethod
+    def _compose_commit_message(entry, body_buffer):
+        """Betreff + Leerzeile + Body, wie Git es erwartet."""
+        subject = entry.get_text().strip()
+        start, end = body_buffer.get_bounds()
+        body = body_buffer.get_text(start, end, False).strip()
+        if not subject:
+            return ""
+        return f"{subject}\n\n{body}" if body else subject
 
     def _setup_log_tags(self):
         self.log_buffer.create_tag("ok",   foreground="#1D9E75")
@@ -630,7 +702,9 @@ class MultiGitPublisher(Gtk.Window):
 
     def _on_git_init(self, _):
         repo_path = self.entry_repo_path.get_text().strip()
-        msg = self.entry_commit_msg.get_text().strip() or "Initial commit"
+        msg = self._compose_commit_message(self.entry_commit_msg, self.buf_commit_body)
+        if not msg:
+            msg = "Initial commit"
         try:
             subprocess.run(["git", "init"],          cwd=repo_path, check=True, capture_output=True)
             subprocess.run(["git", "add", "."],      cwd=repo_path, check=True, capture_output=True)
@@ -645,7 +719,8 @@ class MultiGitPublisher(Gtk.Window):
 
     def _on_git_commit(self, _):
         repo_path = self.entry_repo_path.get_text().strip()
-        msg = self.entry_new_commit_msg.get_text().strip()
+        msg = self._compose_commit_message(self.entry_new_commit_msg,
+                                           self.buf_new_commit_body)
         if not msg:
             self._clear_log()
             self._append_log(t(self.strings, "commit_msg_empty"), "fail")
@@ -655,6 +730,7 @@ class MultiGitPublisher(Gtk.Window):
             result = subprocess.run(["git", "commit", "-m", msg], cwd=repo_path, capture_output=True)
             if result.returncode == 0:
                 self.entry_new_commit_msg.set_text("")
+                self.buf_new_commit_body.set_text("")
                 self._clear_log()
                 self._append_log(t(self.strings, "commit_ok"), "ok")
             else:

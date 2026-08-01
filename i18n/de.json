@@ -53,6 +53,10 @@
   "commit_fail": "Commit fehlgeschlagen: {error}",
   "commit_msg_empty": "Bitte eine Commit-Nachricht eingeben.",
   "restart_hint": "Bitte neu starten.",
+  "commit_subject": "Betreff",
+  "commit_subject_placeholder": "Kurze Zusammenfassung (eine Zeile)",
+  "commit_body": "Beschreibung",
+  "commit_body_tooltip": "Optional. Wird mit einer Leerzeile an den Betreff angehängt, wie Git es erwartet.",
   "tooltip_about": "Über Multi-Git-Publisher",
   "about_comments": "Parallel-Push zu GitHub, GitLab und Codeberg.\n\nTeil der GTK3-Toolbox (NoCoderGHG).\n\nDieses Tool hat sich selbst veröffentlicht."
 }

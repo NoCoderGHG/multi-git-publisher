@@ -53,6 +53,10 @@
   "commit_fail": "Commit failed: {error}",
   "commit_msg_empty": "Please enter a commit message.",
   "restart_hint": "Please restart.",
+  "commit_subject": "Subject",
+  "commit_subject_placeholder": "Short summary (one line)",
+  "commit_body": "Description",
+  "commit_body_tooltip": "Optional. Appended to the subject with a blank line, as Git expects.",
   "tooltip_about": "About Multi-Git-Publisher",
   "about_comments": "Parallel push to GitHub, GitLab and Codeberg.\n\nPart of the GTK3 Toolbox (NoCoderGHG).\n\nThis tool was used to publish itself."
 }
